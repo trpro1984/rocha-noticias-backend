@@ -1,4 +1,4 @@
-// server.js - Backend MEJORADO para monitoreo de noticias de Rocha
+// server.js - Backend COMPLETO para monitoreo de noticias de Rocha
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -17,17 +17,14 @@ const parser = new Parser({
 });
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Base de datos SQLite
 const db = new sqlite3.Database('./noticias.db', (err) => {
   if (err) console.error('Error al abrir base de datos:', err);
   else console.log('✅ Base de datos conectada');
 });
 
-// Crear tablas
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS noticias (
     id TEXT PRIMARY KEY,
@@ -51,7 +48,6 @@ db.serialize(() => {
   db.run(`CREATE INDEX IF NOT EXISTS idx_categoria ON noticias(categoria)`);
 });
 
-// Palabras clave
 const KEYWORDS = {
   principal: ['rocha', 'departamento de rocha'],
   localidades: [
@@ -68,9 +64,7 @@ const KEYWORDS = {
   }
 };
 
-// ========== FUENTES DE NOTICIAS (AMPLIADAS Y MEJORADAS) ==========
 const FUENTES = [
-  // === PORTALES LOCALES DE ROCHA (Prioridad MUY ALTA) ===
   {
     nombre: 'Rocha Noticias',
     url: 'https://rochanoticias.com',
@@ -99,8 +93,6 @@ const FUENTES = [
     selector: '.entry-title a, h2.title a, article h2 a',
     prioridad: 'alta'
   },
-
-  // === MEDIOS NACIONALES (Prioridad MUY ALTA) ===
   {
     nombre: 'El País - Rocha',
     url: 'https://www.elpais.com.uy/noticias/rocha',
@@ -143,8 +135,6 @@ const FUENTES = [
     selector: 'article h2 a, .entry-title a, .post-title a',
     prioridad: 'media'
   },
-
-  // === GOOGLE NEWS RSS (Prioridad MUY ALTA - Últimas 24 horas) ===
   {
     nombre: 'Google News - Rocha Hoy',
     url: 'https://news.google.com/rss/search?q=Rocha+Uruguay+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
@@ -181,8 +171,6 @@ const FUENTES = [
     tipo: 'rss',
     prioridad: 'media'
   },
-
-  // === FUENTES OFICIALES (Prioridad Media) ===
   {
     nombre: 'Intendencia de Rocha',
     url: 'https://rocha.gub.uy',
@@ -199,7 +187,6 @@ const FUENTES = [
   }
 ];
 
-// User agents para rotación
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
@@ -211,7 +198,6 @@ function getRandomUserAgent() {
   return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
-// Funciones de utilidad
 function generarHash(texto) {
   return crypto.createHash('md5').update(texto.toLowerCase().trim()).digest('hex');
 }
@@ -219,19 +205,16 @@ function generarHash(texto) {
 function detectarLocalidades(texto) {
   const localidadesEncontradas = [];
   const textoLower = texto.toLowerCase();
-  
   KEYWORDS.localidades.forEach(loc => {
     if (textoLower.includes(loc)) {
       localidadesEncontradas.push(loc);
     }
   });
-  
   return localidadesEncontradas;
 }
 
 function detectarCategoria(texto) {
   const textoLower = texto.toLowerCase();
-  
   for (const [categoria, keywords] of Object.entries(KEYWORDS.categorias)) {
     for (const keyword of keywords) {
       if (textoLower.includes(keyword)) {
@@ -239,24 +222,19 @@ function detectarCategoria(texto) {
       }
     }
   }
-  
   return 'general';
 }
 
 function contieneKeywords(texto) {
   const textoLower = texto.toLowerCase();
-  
   const tienePrincipal = KEYWORDS.principal.some(kw => textoLower.includes(kw));
   const tieneLocalidad = KEYWORDS.localidades.some(loc => textoLower.includes(loc));
-  
   return tienePrincipal || tieneLocalidad;
 }
 
-// Scraper genérico con mejor manejo de errores
 async function scrapearSitio(fuente) {
   try {
     console.log(`📡 Scrapeando: ${fuente.nombre}`);
-    
     const response = await axios.get(fuente.url, {
       headers: {
         'User-Agent': getRandomUserAgent(),
@@ -275,26 +253,18 @@ async function scrapearSitio(fuente) {
     const visitedUrls = new Set();
 
     $(fuente.selector).each((i, elem) => {
-      if (i >= 30) return false; // Máximo 30 noticias por fuente
-      
+      if (i >= 30) return false;
       const titulo = $(elem).text().trim();
       let url = $(elem).attr('href');
-      
       if (!url || !titulo) return;
-      
-      // Convertir URL relativa a absoluta
       if (url.startsWith('/')) {
         const baseUrl = new URL(fuente.url);
         url = `${baseUrl.protocol}//${baseUrl.host}${url}`;
       } else if (!url.startsWith('http')) {
         return;
       }
-      
-      // Evitar duplicados en la misma fuente
       if (visitedUrls.has(url)) return;
       visitedUrls.add(url);
-      
-      // Filtrar por keywords
       if (contieneKeywords(titulo)) {
         noticias.push({
           titulo: titulo.substring(0, 200),
@@ -306,33 +276,27 @@ async function scrapearSitio(fuente) {
 
     console.log(`✅ ${fuente.nombre}: ${noticias.length} noticias relevantes`);
     return noticias;
-    
   } catch (error) {
     console.error(`❌ Error en ${fuente.nombre}:`, error.message);
     return [];
   }
 }
 
-// Parser RSS mejorado
 async function parsearRSS(fuente) {
   try {
     console.log(`📡 RSS: ${fuente.nombre}`);
-    
     const feed = await parser.parseURL(fuente.url);
     const noticias = [];
     const visitedUrls = new Set();
 
     feed.items.forEach((item, i) => {
       if (i >= 30) return;
-      
       const titulo = item.title || '';
       const resumen = item.contentSnippet || item.description || item.content || '';
       const textoCompleto = `${titulo} ${resumen}`;
       const url = item.link || item.guid;
-      
       if (!url || visitedUrls.has(url)) return;
       visitedUrls.add(url);
-      
       if (contieneKeywords(textoCompleto)) {
         noticias.push({
           titulo: titulo.substring(0, 200),
@@ -345,14 +309,12 @@ async function parsearRSS(fuente) {
 
     console.log(`✅ ${fuente.nombre}: ${noticias.length} noticias relevantes`);
     return noticias;
-    
   } catch (error) {
     console.error(`❌ Error en RSS ${fuente.nombre}:`, error.message);
     return [];
   }
 }
 
-// Guardar noticia en DB
 function guardarNoticia(noticia) {
   return new Promise((resolve, reject) => {
     const hash = generarHash(noticia.titulo);
@@ -363,16 +325,7 @@ function guardarNoticia(noticia) {
     const sql = `INSERT INTO noticias (id, titulo, resumen, url, fuente, categoria, localidades, hash)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
 
-    db.run(sql, [
-      id,
-      noticia.titulo,
-      noticia.resumen || '',
-      noticia.url,
-      noticia.fuente,
-      categoria,
-      localidades,
-      hash
-    ], function(err) {
+    db.run(sql, [id, noticia.titulo, noticia.resumen || '', noticia.url, noticia.fuente, categoria, localidades, hash], function(err) {
       if (err) {
         if (err.message.includes('UNIQUE')) {
           resolve({ duplicado: true });
@@ -386,7 +339,6 @@ function guardarNoticia(noticia) {
   });
 }
 
-// Enviar notificación push (ntfy.sh)
 async function enviarNotificacion(noticia, categoria) {
   try {
     const emojiCategoria = {
@@ -407,17 +359,13 @@ async function enviarNotificacion(noticia, categoria) {
       click: noticia.url
     };
 
-    await axios.post('https://ntfy.sh', mensaje, {
-      timeout: 5000
-    });
-    
+    await axios.post('https://ntfy.sh', mensaje, { timeout: 5000 });
     console.log(`🔔 Notificación enviada: ${noticia.titulo.substring(0, 50)}...`);
   } catch (error) {
     console.error('⚠️ Error al enviar notificación:', error.message);
   }
 }
 
-// Monitorear fuentes específicas
 async function monitorearFuentesEspecificas(fuentes, descripcion) {
   console.log(`\n🔍 ${descripcion}`);
   let noticiasNuevas = 0;
@@ -426,7 +374,6 @@ async function monitorearFuentesEspecificas(fuentes, descripcion) {
   for (const fuente of fuentes) {
     try {
       let noticias = [];
-      
       if (fuente.tipo === 'rss') {
         noticias = await parsearRSS(fuente);
       } else {
@@ -438,21 +385,18 @@ async function monitorearFuentesEspecificas(fuentes, descripcion) {
       for (const noticia of noticias) {
         try {
           const resultado = await guardarNoticia(noticia);
-          
           if (resultado.nuevo) {
             noticiasNuevas++;
             console.log(`💾 NUEVA: ${noticia.titulo.substring(0, 70)}...`);
             await enviarNotificacion(noticia, resultado.categoria);
           }
         } catch (error) {
-          // Error guardando (probablemente duplicado)
+          // Error guardando
         }
       }
 
-      // Delay aleatorio entre fuentes (2-4 segundos)
       const delay = 2000 + Math.random() * 2000;
       await new Promise(resolve => setTimeout(resolve, delay));
-      
     } catch (error) {
       console.error(`❌ Error procesando ${fuente.nombre}:`, error.message);
     }
@@ -462,30 +406,24 @@ async function monitorearFuentesEspecificas(fuentes, descripcion) {
   return noticiasNuevas;
 }
 
-// ========== CRON JOBS (FRECUENCIAS OPTIMIZADAS) ==========
-
-// Cada 3 minutos: Fuentes MUY prioritarias (Google News + Portales locales)
 cron.schedule('*/3 * * * *', async () => {
   console.log('\n⏰ ═══ MONITOREO PRIORITARIO (cada 3 min) ═══');
   const fuentesPrioritarias = FUENTES.filter(f => f.prioridad === 'muy-alta');
   await monitorearFuentesEspecificas(fuentesPrioritarias, 'Fuentes muy prioritarias');
 });
 
-// Cada 10 minutos: Fuentes importantes
 cron.schedule('*/10 * * * *', async () => {
   console.log('\n⏰ ═══ MONITOREO REGULAR (cada 10 min) ═══');
   const fuentesAltas = FUENTES.filter(f => f.prioridad === 'alta');
   await monitorearFuentesEspecificas(fuentesAltas, 'Fuentes importantes');
 });
 
-// Cada 30 minutos: Fuentes oficiales y menos frecuentes
 cron.schedule('*/30 * * * *', async () => {
   console.log('\n⏰ ═══ MONITOREO OFICIAL (cada 30 min) ═══');
   const fuentesMedias = FUENTES.filter(f => f.prioridad === 'media');
   await monitorearFuentesEspecificas(fuentesMedias, 'Fuentes oficiales');
 });
 
-// Limpieza diaria (eliminar noticias de más de 60 días)
 cron.schedule('0 3 * * *', () => {
   console.log('\n🧹 Ejecutando limpieza diaria...');
   db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-60 days")', function(err) {
@@ -497,21 +435,15 @@ cron.schedule('0 3 * * *', () => {
   });
 });
 
-// ========== API REST ENDPOINTS ==========
-
-// Obtener noticias recientes
 app.get('/api/noticias', (req, res) => {
   const limite = parseInt(req.query.limite) || 50;
   const categoria = req.query.categoria;
-  
   let sql = 'SELECT * FROM noticias';
   let params = [];
-  
   if (categoria && categoria !== 'todas') {
     sql += ' WHERE categoria = ?';
     params.push(categoria);
   }
-  
   sql += ' ORDER BY timestamp DESC LIMIT ?';
   params.push(limite);
 
@@ -527,7 +459,6 @@ app.get('/api/noticias', (req, res) => {
   });
 });
 
-// Obtener noticia por ID
 app.get('/api/noticias/:id', (req, res) => {
   db.get('SELECT * FROM noticias WHERE id = ?', [req.params.id], (err, row) => {
     if (err) {
@@ -541,18 +472,13 @@ app.get('/api/noticias/:id', (req, res) => {
   });
 });
 
-// Buscar noticias
 app.get('/api/buscar', (req, res) => {
   const query = req.query.q;
-  
   if (!query) {
     return res.status(400).json({ error: 'Parámetro q requerido' });
   }
 
-  const sql = `SELECT * FROM noticias 
-               WHERE titulo LIKE ? OR resumen LIKE ?
-               ORDER BY timestamp DESC LIMIT 50`;
-  
+  const sql = `SELECT * FROM noticias WHERE titulo LIKE ? OR resumen LIKE ? ORDER BY timestamp DESC LIMIT 50`;
   const searchTerm = `%${query}%`;
 
   db.all(sql, [searchTerm, searchTerm], (err, rows) => {
@@ -567,10 +493,8 @@ app.get('/api/buscar', (req, res) => {
   });
 });
 
-// Registrar dispositivo para notificaciones
 app.post('/api/registro-dispositivo', (req, res) => {
   const { token } = req.body;
-  
   if (!token) {
     return res.status(400).json({ error: 'Token requerido' });
   }
@@ -579,16 +503,11 @@ app.post('/api/registro-dispositivo', (req, res) => {
     if (err) {
       res.status(500).json({ error: err.message });
     } else {
-      res.json({ 
-        success: true, 
-        mensaje: 'Dispositivo registrado',
-        topic: 'rocha-noticias'
-      });
+      res.json({ success: true, mensaje: 'Dispositivo registrado', topic: 'rocha-noticias' });
     }
   });
 });
 
-// Obtener estadísticas
 app.get('/api/stats', (req, res) => {
   const queries = {
     total: 'SELECT COUNT(*) as count FROM noticias',
@@ -603,19 +522,14 @@ app.get('/api/stats', (req, res) => {
 
   db.get(queries.total, (err, row) => {
     stats.total = row.count;
-    
     db.get(queries.hoy, (err, row) => {
       stats.hoy = row.count;
-      
       db.get(queries.semana, (err, row) => {
         stats.semana = row.count;
-        
         db.get(queries.recientes, (err, row) => {
           stats.ultima_hora = row.count;
-          
           db.all(queries.porCategoria, (err, rows) => {
             stats.categorias = rows;
-            
             db.all(queries.porFuente, (err, rows) => {
               stats.fuentes = rows;
               res.json(stats);
@@ -627,16 +541,10 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-// Health check
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    fuentes_activas: FUENTES.length
-  });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), fuentes_activas: FUENTES.length });
 });
 
-// Página de inicio
 app.get('/', (req, res) => {
   res.json({
     nombre: 'API de Noticias de Rocha - MEJORADA',
@@ -644,20 +552,19 @@ app.get('/', (req, res) => {
     fuentes: FUENTES.length,
     descripcion: 'Sistema automatizado de monitoreo de noticias del Departamento de Rocha, Uruguay',
     endpoints: [
-      'GET /api/noticias - Últimas noticias',
-      'GET /api/noticias?categoria=turismo - Filtrar por categoría',
-      'GET /api/noticias/:id - Noticia específica',
-      'GET /api/buscar?q=texto - Buscar noticias',
-      'POST /api/registro-dispositivo - Registrar dispositivo',
-      'GET /api/stats - Estadísticas',
-      'GET /health - Estado del servidor'
+      'GET /api/noticias',
+      'GET /api/noticias?categoria=turismo',
+      'GET /api/noticias/:id',
+      'GET /api/buscar?q=texto',
+      'POST /api/registro-dispositivo',
+      'GET /api/stats',
+      'GET /health'
     ],
     categorias: Object.keys(KEYWORDS.categorias),
     localidades_monitoreadas: KEYWORDS.localidades.length
   });
 });
 
-// Iniciar servidor
 app.listen(PORT, () => {
   console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
@@ -669,16 +576,24 @@ app.listen(PORT, () => {
 ╚═══════════════════════════════════════════════════════════════╝
   `);
   
-  // Ejecutar monitoreo inicial
-  console.log('🔄 Ejecutando monitoreo inicial...');
+  console.log('🔄 Ejecutando monitoreo inicial en 5 segundos...');
   setTimeout(async () => {
     await monitorearFuentesEspecificas(FUENTES, 'Monitoreo inicial de todas las fuentes');
-  }, 3000);
+  }, 5000);
 });
 
-// Manejo de errores
 process.on('uncaughtException', (error) => {
   console.error('💥 Error no capturado:', error);
 });
 
-process.on('unhandledRejection',
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Promesa rechazada:', reason);
+});
+
+process.on('SIGINT', () => {
+  console.log('\n👋 Cerrando servidor...');
+  db.close((err) => {
+    if (err) console.error('Error cerrando BD:', err);
+    process.exit(0);
+  });
+});

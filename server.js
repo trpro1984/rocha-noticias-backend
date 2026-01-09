@@ -232,6 +232,19 @@ function contieneKeywords(texto) {
   return tienePrincipal || tieneLocalidad;
 }
 
+function esNoticiaReciente(fechaStr) {
+  if (!fechaStr) return true;
+  
+  try {
+    const fechaNoticia = new Date(fechaStr);
+    const ahora = new Date();
+    const diasDiferencia = (ahora - fechaNoticia) / (1000 * 60 * 60 * 24);
+    
+    return diasDiferencia <= 7;
+  } catch (error) {
+    return true;
+  }
+}
 async function scrapearSitio(fuente) {
   try {
     console.log(`📡 Scrapeando: ${fuente.nombre}`);
@@ -291,23 +304,34 @@ async function parsearRSS(fuente) {
 
     feed.items.forEach((item, i) => {
       if (i >= 30) return;
+      
       const titulo = item.title || '';
       const resumen = item.contentSnippet || item.description || item.content || '';
       const textoCompleto = `${titulo} ${resumen}`;
       const url = item.link || item.guid;
+      const fecha = item.pubDate || item.isoDate || item.date;
+      
       if (!url || visitedUrls.has(url)) return;
       visitedUrls.add(url);
+      
+      // ✅ NUEVO: Verificar que sea noticia reciente
+      if (!esNoticiaReciente(fecha)) {
+        console.log(`⏭️ Saltando noticia antigua: ${titulo.substring(0, 50)}...`);
+        return;
+      }
+      
       if (contieneKeywords(textoCompleto)) {
         noticias.push({
           titulo: titulo.substring(0, 200),
           url,
           resumen: resumen.substring(0, 400),
-          fuente: fuente.nombre
+          fuente: fuente.nombre,
+          fechaPublicacion: fecha
         });
       }
     });
 
-    console.log(`✅ ${fuente.nombre}: ${noticias.length} noticias relevantes`);
+    console.log(`✅ ${fuente.nombre}: ${noticias.length} noticias relevantes (últimos 7 días)`);
     return noticias;
   } catch (error) {
     console.error(`❌ Error en RSS ${fuente.nombre}:`, error.message);
@@ -322,10 +346,22 @@ function guardarNoticia(noticia) {
     const categoria = detectarCategoria(noticia.titulo + ' ' + (noticia.resumen || ''));
     const id = crypto.randomUUID();
 
-    const sql = `INSERT INTO noticias (id, titulo, resumen, url, fuente, categoria, localidades, hash)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+    // Si la noticia tiene fecha de publicación, usarla; si no, usar fecha actual
+    const timestamp = noticia.fechaPublicacion 
+      ? new Date(noticia.fechaPublicacion).toISOString().slice(0, 19).replace('T', ' ')
+      : null;
 
-    db.run(sql, [id, noticia.titulo, noticia.resumen || '', noticia.url, noticia.fuente, categoria, localidades, hash], function(err) {
+    const sql = timestamp
+      ? `INSERT INTO noticias (id, titulo, resumen, url, fuente, categoria, localidades, hash, timestamp)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      : `INSERT INTO noticias (id, titulo, resumen, url, fuente, categoria, localidades, hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    const params = timestamp
+      ? [id, noticia.titulo, noticia.resumen || '', noticia.url, noticia.fuente, categoria, localidades, hash, timestamp]
+      : [id, noticia.titulo, noticia.resumen || '', noticia.url, noticia.fuente, categoria, localidades, hash];
+
+    db.run(sql, params, function(err) {
       if (err) {
         if (err.message.includes('UNIQUE')) {
           resolve({ duplicado: true });
@@ -431,6 +467,17 @@ cron.schedule('0 3 * * *', () => {
       console.error('❌ Error en limpieza:', err);
     } else {
       console.log(`✅ Limpieza completada: ${this.changes} noticias antiguas eliminadas`);
+    }
+  });
+});
+// Cada hora: Limpiar noticias de más de 30 días
+cron.schedule('0 * * * *', () => {
+  console.log('\n🧹 Limpieza automática cada hora...');
+  db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-30 days")', function(err) {
+    if (err) {
+      console.error('❌ Error en limpieza:', err);
+    } else if (this.changes > 0) {
+      console.log(`✅ Eliminadas ${this.changes} noticias antiguas (>30 días)`);
     }
   });
 });
@@ -540,7 +587,48 @@ app.get('/api/stats', (req, res) => {
     });
   });
 });
+// Endpoint para limpiar noticias antiguas manualmente
+app.get('/api/admin/limpiar', (req, res) => {
+  console.log('🧹 Limpieza manual solicitada...');
+  
+  db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-7 days")', function(err) {
+    if (err) {
+      console.error('❌ Error en limpieza:', err);
+      res.status(500).json({ error: err.message });
+    } else {
+      console.log(`✅ Eliminadas ${this.changes} noticias antiguas`);
+      res.json({ 
+        success: true, 
+        eliminadas: this.changes,
+        mensaje: `Se eliminaron ${this.changes} noticias de más de 7 días`
+      });
+    }
+  });
+});
 
+// Endpoint para ver distribución de noticias por fecha
+app.get('/api/admin/fechas', (req, res) => {
+  const sql = `
+    SELECT 
+      DATE(timestamp) as fecha,
+      COUNT(*) as cantidad
+    FROM noticias 
+    GROUP BY DATE(timestamp)
+    ORDER BY fecha DESC
+    LIMIT 30
+  `;
+  
+  db.all(sql, (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.json({ 
+        distribucion: rows,
+        total: rows.reduce((sum, row) => sum + row.cantidad, 0)
+      });
+    }
+  });
+});
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString(), fuentes_activas: FUENTES.length });
 });

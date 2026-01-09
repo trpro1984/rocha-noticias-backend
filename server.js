@@ -1,4 +1,4 @@
-// server.js - Backend para monitoreo de noticias de Rocha
+// server.js - Backend MEJORADO para monitoreo de noticias de Rocha
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -9,7 +9,12 @@ const cron = require('node-cron');
 const cors = require('cors');
 
 const app = express();
-const parser = new Parser();
+const parser = new Parser({
+  timeout: 10000,
+  headers: {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  }
+});
 const PORT = process.env.PORT || 3000;
 
 // Middleware
@@ -52,57 +57,163 @@ const KEYWORDS = {
   localidades: [
     'la paloma', 'la pedrera', 'barra de valizas', 'punta del diablo',
     'aguas dulces', 'chuy', 'castillos', 'lascano', 'cebollatí',
-    '19 de abril', 'la coronilla', 'cabo polonio'
+    '19 de abril', 'la coronilla', 'cabo polonio', 'valizas', 'la esmeralda'
   ],
   categorias: {
-    turismo: ['turismo', 'playa', 'temporada', 'guardavidas', 'aeropuerto'],
-    politica: ['intendencia', 'municipio', 'intendente', 'alcalde'],
-    seguridad: ['policía', 'bomberos', 'siniestro', 'accidente'],
-    deportes: ['rocha fc', 'fútbol', 'deporte'],
-    eventos: ['festival', 'evento', 'feria']
+    turismo: ['turismo', 'playa', 'temporada', 'guardavidas', 'aeropuerto', 'hotel', 'visitantes'],
+    politica: ['intendencia', 'municipio', 'intendente', 'alcalde', 'junta', 'edil'],
+    seguridad: ['policía', 'bomberos', 'siniestro', 'accidente', 'rapiña', 'hurto', 'rescate'],
+    deportes: ['rocha fc', 'fútbol', 'deporte', 'campeonato', 'torneo'],
+    eventos: ['festival', 'evento', 'feria', 'concierto', 'espectáculo']
   }
 };
 
-// Fuentes de noticias
+// ========== FUENTES DE NOTICIAS (AMPLIADAS Y MEJORADAS) ==========
 const FUENTES = [
+  // === PORTALES LOCALES DE ROCHA (Prioridad MUY ALTA) ===
   {
     nombre: 'Rocha Noticias',
     url: 'https://rochanoticias.com',
     tipo: 'scraping',
-    selector: '.post-title a, .entry-title a, h2 a',
+    selector: '.post-title a, .entry-title a, article h2 a, h2.title a',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Rocha al Día',
+    url: 'https://rochaaldia.com',
+    tipo: 'scraping',
+    selector: '.post-title a, .entry-title a, h2 a, article header a',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'La Paloma Hoy',
+    url: 'https://lapalomahoy.com',
+    tipo: 'scraping',
+    selector: '.post-title a, article h2 a, .entry-title a',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Rocha Total',
+    url: 'https://rochatotal.com',
+    tipo: 'scraping',
+    selector: '.entry-title a, h2.title a, article h2 a',
     prioridad: 'alta'
   },
+
+  // === MEDIOS NACIONALES (Prioridad MUY ALTA) ===
   {
     nombre: 'El País - Rocha',
     url: 'https://www.elpais.com.uy/noticias/rocha',
     tipo: 'scraping',
-    selector: 'article h2 a, .headline a',
-    prioridad: 'alta'
+    selector: 'article h2 a, .headline a, .article-title a, h3 a',
+    prioridad: 'muy-alta'
   },
   {
     nombre: 'Montevideo Portal',
-    url: 'https://www.montevideo.com.uy',
+    url: 'https://www.montevideo.com.uy/Noticias/Rocha',
     tipo: 'scraping',
-    selector: '.article-title a, h2.title a',
+    selector: '.article-title a, h2.title a, .headline a, .listanoticias a',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Subrayado',
+    url: 'https://www.subrayado.com.uy/sitio/busqueda?texto=rocha',
+    tipo: 'scraping',
+    selector: '.article-title a, h2 a, .titulo a',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'El Observador - Rocha',
+    url: 'https://www.elobservador.com.uy/buscar?q=Rocha',
+    tipo: 'scraping',
+    selector: '.article-title a, h2 a, .headline a',
     prioridad: 'alta'
   },
   {
-    nombre: 'Google News - Rocha',
-    url: 'https://news.google.com/rss/search?q=Rocha+Uruguay&hl=es-UY&gl=UY&ceid=UY:es-419',
+    nombre: 'La Diaria',
+    url: 'https://ladiaria.com.uy/search/?q=rocha',
+    tipo: 'scraping',
+    selector: 'article h2 a, .article-title a, h3 a',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'Telemundo',
+    url: 'https://www.telemundo.com.uy',
+    tipo: 'scraping',
+    selector: 'article h2 a, .entry-title a, .post-title a',
+    prioridad: 'media'
+  },
+
+  // === GOOGLE NEWS RSS (Prioridad MUY ALTA - Últimas 24 horas) ===
+  {
+    nombre: 'Google News - Rocha Hoy',
+    url: 'https://news.google.com/rss/search?q=Rocha+Uruguay+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
+    tipo: 'rss',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Google News - La Paloma Hoy',
+    url: 'https://news.google.com/rss/search?q=%22La+Paloma%22+Rocha+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
+    tipo: 'rss',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Google News - Punta del Diablo',
+    url: 'https://news.google.com/rss/search?q=%22Punta+del+Diablo%22+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
     tipo: 'rss',
     prioridad: 'alta'
   },
   {
-    nombre: 'Google News - La Paloma',
-    url: 'https://news.google.com/rss/search?q=La+Paloma+Rocha&hl=es-UY&gl=UY&ceid=UY:es-419',
+    nombre: 'Google News - Chuy',
+    url: 'https://news.google.com/rss/search?q=Chuy+Uruguay+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
     tipo: 'rss',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'Google News - Cabo Polonio',
+    url: 'https://news.google.com/rss/search?q=%22Cabo+Polonio%22+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
+    tipo: 'rss',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'Google News - Barra de Valizas',
+    url: 'https://news.google.com/rss/search?q=%22Barra+de+Valizas%22+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
+    tipo: 'rss',
+    prioridad: 'media'
+  },
+
+  // === FUENTES OFICIALES (Prioridad Media) ===
+  {
+    nombre: 'Intendencia de Rocha',
+    url: 'https://rocha.gub.uy',
+    tipo: 'scraping',
+    selector: '.noticia-titulo a, article h2 a, .news-title a, .titulo-noticia a',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'Turismo Rocha',
+    url: 'https://www.turismorocha.gub.uy',
+    tipo: 'scraping',
+    selector: '.news-title a, article h2 a, .noticia a',
     prioridad: 'media'
   }
 ];
 
+// User agents para rotación
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+];
+
+function getRandomUserAgent() {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+}
+
 // Funciones de utilidad
 function generarHash(texto) {
-  return crypto.createHash('md5').update(texto.toLowerCase()).digest('hex');
+  return crypto.createHash('md5').update(texto.toLowerCase().trim()).digest('hex');
 }
 
 function detectarLocalidades(texto) {
@@ -135,50 +246,58 @@ function detectarCategoria(texto) {
 function contieneKeywords(texto) {
   const textoLower = texto.toLowerCase();
   
-  // Buscar palabra principal
   const tienePrincipal = KEYWORDS.principal.some(kw => textoLower.includes(kw));
-  
-  // Buscar localidades
   const tieneLocalidad = KEYWORDS.localidades.some(loc => textoLower.includes(loc));
   
   return tienePrincipal || tieneLocalidad;
 }
 
-// Scraper genérico
+// Scraper genérico con mejor manejo de errores
 async function scrapearSitio(fuente) {
   try {
     console.log(`📡 Scrapeando: ${fuente.nombre}`);
     
     const response = await axios.get(fuente.url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'es-UY,es;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
       },
-      timeout: 10000
+      timeout: 15000,
+      maxRedirects: 5
     });
 
     const $ = cheerio.load(response.data);
     const noticias = [];
+    const visitedUrls = new Set();
 
     $(fuente.selector).each((i, elem) => {
-      if (i >= 20) return; // Límite de 20 noticias por fuente
+      if (i >= 30) return false; // Máximo 30 noticias por fuente
       
       const titulo = $(elem).text().trim();
       let url = $(elem).attr('href');
       
-      if (!url) return;
+      if (!url || !titulo) return;
       
       // Convertir URL relativa a absoluta
       if (url.startsWith('/')) {
         const baseUrl = new URL(fuente.url);
         url = `${baseUrl.protocol}//${baseUrl.host}${url}`;
+      } else if (!url.startsWith('http')) {
+        return;
       }
       
-      if (!url.startsWith('http')) return;
+      // Evitar duplicados en la misma fuente
+      if (visitedUrls.has(url)) return;
+      visitedUrls.add(url);
       
       // Filtrar por keywords
       if (contieneKeywords(titulo)) {
         noticias.push({
-          titulo,
+          titulo: titulo.substring(0, 200),
           url,
           fuente: fuente.nombre
         });
@@ -194,25 +313,30 @@ async function scrapearSitio(fuente) {
   }
 }
 
-// Parser RSS
+// Parser RSS mejorado
 async function parsearRSS(fuente) {
   try {
     console.log(`📡 RSS: ${fuente.nombre}`);
     
     const feed = await parser.parseURL(fuente.url);
     const noticias = [];
+    const visitedUrls = new Set();
 
     feed.items.forEach((item, i) => {
-      if (i >= 20) return;
+      if (i >= 30) return;
       
       const titulo = item.title || '';
-      const resumen = item.contentSnippet || item.description || '';
+      const resumen = item.contentSnippet || item.description || item.content || '';
       const textoCompleto = `${titulo} ${resumen}`;
+      const url = item.link || item.guid;
+      
+      if (!url || visitedUrls.has(url)) return;
+      visitedUrls.add(url);
       
       if (contieneKeywords(textoCompleto)) {
         noticias.push({
-          titulo,
-          url: item.link,
+          titulo: titulo.substring(0, 200),
+          url,
           resumen: resumen.substring(0, 400),
           fuente: fuente.nombre
         });
@@ -265,37 +389,41 @@ function guardarNoticia(noticia) {
 // Enviar notificación push (ntfy.sh)
 async function enviarNotificacion(noticia, categoria) {
   try {
-    // Obtener todos los dispositivos registrados
-    db.all('SELECT token FROM dispositivos', async (err, rows) => {
-      if (err || !rows.length) return;
+    const emojiCategoria = {
+      turismo: '🏖️',
+      politica: '🏛️',
+      seguridad: '👮',
+      deportes: '⚽',
+      eventos: '🎪',
+      general: '📰'
+    };
 
-      const mensaje = {
-        topic: 'rocha-noticias', // Tema público para ntfy.sh
-        title: `📰 ${noticia.fuente}`,
-        message: noticia.titulo,
-        tags: [categoria],
-        priority: 4,
-        click: noticia.url
-      };
+    const mensaje = {
+      topic: 'rocha-noticias',
+      title: `${emojiCategoria[categoria] || '📰'} ${noticia.fuente}`,
+      message: noticia.titulo,
+      tags: [categoria],
+      priority: 4,
+      click: noticia.url
+    };
 
-      try {
-        await axios.post('https://ntfy.sh', mensaje);
-        console.log('🔔 Notificación enviada');
-      } catch (error) {
-        console.error('Error al enviar notificación:', error.message);
-      }
+    await axios.post('https://ntfy.sh', mensaje, {
+      timeout: 5000
     });
+    
+    console.log(`🔔 Notificación enviada: ${noticia.titulo.substring(0, 50)}...`);
   } catch (error) {
-    console.error('Error en enviarNotificacion:', error);
+    console.error('⚠️ Error al enviar notificación:', error.message);
   }
 }
 
-// Proceso principal de monitoreo
-async function monitorearFuentes() {
-  console.log('\n🔍 Iniciando monitoreo...');
+// Monitorear fuentes específicas
+async function monitorearFuentesEspecificas(fuentes, descripcion) {
+  console.log(`\n🔍 ${descripcion}`);
   let noticiasNuevas = 0;
+  let noticiasRevisadas = 0;
 
-  for (const fuente of FUENTES) {
+  for (const fuente of fuentes) {
     try {
       let noticias = [];
       
@@ -305,34 +433,71 @@ async function monitorearFuentes() {
         noticias = await scrapearSitio(fuente);
       }
 
+      noticiasRevisadas += noticias.length;
+
       for (const noticia of noticias) {
         try {
           const resultado = await guardarNoticia(noticia);
           
           if (resultado.nuevo) {
             noticiasNuevas++;
-            console.log(`💾 Nueva: ${noticia.titulo.substring(0, 60)}...`);
-            
-            // Enviar notificación push
+            console.log(`💾 NUEVA: ${noticia.titulo.substring(0, 70)}...`);
             await enviarNotificacion(noticia, resultado.categoria);
           }
         } catch (error) {
-          console.error('Error al guardar noticia:', error.message);
+          // Error guardando (probablemente duplicado)
         }
       }
 
-      // Delay entre fuentes para evitar bloqueos
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Delay aleatorio entre fuentes (2-4 segundos)
+      const delay = 2000 + Math.random() * 2000;
+      await new Promise(resolve => setTimeout(resolve, delay));
       
     } catch (error) {
-      console.error(`Error procesando ${fuente.nombre}:`, error.message);
+      console.error(`❌ Error procesando ${fuente.nombre}:`, error.message);
     }
   }
 
-  console.log(`\n✨ Monitoreo completado: ${noticiasNuevas} noticias nuevas\n`);
+  console.log(`📊 Resultado: ${noticiasNuevas} nuevas de ${noticiasRevisadas} revisadas\n`);
+  return noticiasNuevas;
 }
 
-// API REST Endpoints
+// ========== CRON JOBS (FRECUENCIAS OPTIMIZADAS) ==========
+
+// Cada 3 minutos: Fuentes MUY prioritarias (Google News + Portales locales)
+cron.schedule('*/3 * * * *', async () => {
+  console.log('\n⏰ ═══ MONITOREO PRIORITARIO (cada 3 min) ═══');
+  const fuentesPrioritarias = FUENTES.filter(f => f.prioridad === 'muy-alta');
+  await monitorearFuentesEspecificas(fuentesPrioritarias, 'Fuentes muy prioritarias');
+});
+
+// Cada 10 minutos: Fuentes importantes
+cron.schedule('*/10 * * * *', async () => {
+  console.log('\n⏰ ═══ MONITOREO REGULAR (cada 10 min) ═══');
+  const fuentesAltas = FUENTES.filter(f => f.prioridad === 'alta');
+  await monitorearFuentesEspecificas(fuentesAltas, 'Fuentes importantes');
+});
+
+// Cada 30 minutos: Fuentes oficiales y menos frecuentes
+cron.schedule('*/30 * * * *', async () => {
+  console.log('\n⏰ ═══ MONITOREO OFICIAL (cada 30 min) ═══');
+  const fuentesMedias = FUENTES.filter(f => f.prioridad === 'media');
+  await monitorearFuentesEspecificas(fuentesMedias, 'Fuentes oficiales');
+});
+
+// Limpieza diaria (eliminar noticias de más de 60 días)
+cron.schedule('0 3 * * *', () => {
+  console.log('\n🧹 Ejecutando limpieza diaria...');
+  db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-60 days")', function(err) {
+    if (err) {
+      console.error('❌ Error en limpieza:', err);
+    } else {
+      console.log(`✅ Limpieza completada: ${this.changes} noticias antiguas eliminadas`);
+    }
+  });
+});
+
+// ========== API REST ENDPOINTS ==========
 
 // Obtener noticias recientes
 app.get('/api/noticias', (req, res) => {
@@ -428,8 +593,10 @@ app.get('/api/stats', (req, res) => {
   const queries = {
     total: 'SELECT COUNT(*) as count FROM noticias',
     hoy: 'SELECT COUNT(*) as count FROM noticias WHERE DATE(timestamp) = DATE("now")',
-    porCategoria: 'SELECT categoria, COUNT(*) as count FROM noticias GROUP BY categoria',
-    porFuente: 'SELECT fuente, COUNT(*) as count FROM noticias GROUP BY fuente'
+    semana: 'SELECT COUNT(*) as count FROM noticias WHERE timestamp > datetime("now", "-7 days")',
+    porCategoria: 'SELECT categoria, COUNT(*) as count FROM noticias GROUP BY categoria ORDER BY count DESC',
+    porFuente: 'SELECT fuente, COUNT(*) as count FROM noticias GROUP BY fuente ORDER BY count DESC LIMIT 10',
+    recientes: 'SELECT COUNT(*) as count FROM noticias WHERE timestamp > datetime("now", "-1 hour")'
   };
 
   const stats = {};
@@ -440,12 +607,20 @@ app.get('/api/stats', (req, res) => {
     db.get(queries.hoy, (err, row) => {
       stats.hoy = row.count;
       
-      db.all(queries.porCategoria, (err, rows) => {
-        stats.categorias = rows;
+      db.get(queries.semana, (err, row) => {
+        stats.semana = row.count;
         
-        db.all(queries.porFuente, (err, rows) => {
-          stats.fuentes = rows;
-          res.json(stats);
+        db.get(queries.recientes, (err, row) => {
+          stats.ultima_hora = row.count;
+          
+          db.all(queries.porCategoria, (err, rows) => {
+            stats.categorias = rows;
+            
+            db.all(queries.porFuente, (err, rows) => {
+              stats.fuentes = rows;
+              res.json(stats);
+            });
+          });
         });
       });
     });
@@ -454,65 +629,56 @@ app.get('/api/stats', (req, res) => {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    fuentes_activas: FUENTES.length
+  });
 });
 
 // Página de inicio
 app.get('/', (req, res) => {
   res.json({
-    nombre: 'API de Noticias de Rocha',
-    version: '1.0.0',
+    nombre: 'API de Noticias de Rocha - MEJORADA',
+    version: '2.0.0',
+    fuentes: FUENTES.length,
+    descripcion: 'Sistema automatizado de monitoreo de noticias del Departamento de Rocha, Uruguay',
     endpoints: [
-      'GET /api/noticias',
-      'GET /api/noticias/:id',
-      'GET /api/buscar?q=texto',
-      'POST /api/registro-dispositivo',
-      'GET /api/stats',
-      'GET /health'
-    ]
-  });
-});
-
-// Configurar cron jobs
-cron.schedule('*/10 * * * *', () => {
-  console.log('⏰ Ejecutando monitoreo programado...');
-  monitorearFuentes();
-});
-
-// Limpieza diaria (eliminar noticias de más de 30 días)
-cron.schedule('0 3 * * *', () => {
-  console.log('🧹 Limpiando noticias antiguas...');
-  db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-30 days")', (err) => {
-    if (err) {
-      console.error('Error en limpieza:', err);
-    } else {
-      console.log('✅ Limpieza completada');
-    }
+      'GET /api/noticias - Últimas noticias',
+      'GET /api/noticias?categoria=turismo - Filtrar por categoría',
+      'GET /api/noticias/:id - Noticia específica',
+      'GET /api/buscar?q=texto - Buscar noticias',
+      'POST /api/registro-dispositivo - Registrar dispositivo',
+      'GET /api/stats - Estadísticas',
+      'GET /health - Estado del servidor'
+    ],
+    categorias: Object.keys(KEYWORDS.categorias),
+    localidades_monitoreadas: KEYWORDS.localidades.length
   });
 });
 
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`
-╔═══════════════════════════════════════════════════════╗
-║  🌊 Sistema de Monitoreo de Noticias de Rocha       ║
-║  🚀 Servidor iniciado en puerto ${PORT}                ║
-║  📡 API disponible en http://localhost:${PORT}         ║
-╚═══════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════════════╗
+║  🌊 Sistema de Monitoreo de Noticias de Rocha - MEJORADO    ║
+║  🚀 Servidor iniciado en puerto ${PORT}                           ║
+║  📡 Monitoreando ${FUENTES.length} fuentes de noticias                    ║
+║  🔔 Notificaciones: ntfy.sh/rocha-noticias                   ║
+║  ⏰ Actualizaciones: cada 3-30 minutos según prioridad       ║
+╚═══════════════════════════════════════════════════════════════╝
   `);
   
   // Ejecutar monitoreo inicial
   console.log('🔄 Ejecutando monitoreo inicial...');
-  monitorearFuentes();
+  setTimeout(async () => {
+    await monitorearFuentesEspecificas(FUENTES, 'Monitoreo inicial de todas las fuentes');
+  }, 3000);
 });
 
 // Manejo de errores
 process.on('uncaughtException', (error) => {
-  console.error('Error no capturado:', error);
+  console.error('💥 Error no capturado:', error);
 });
 
-process.on('SIGINT', () => {
-  console.log('\n👋 Cerrando servidor...');
-  db.close();
-  process.exit(0);
-});
+process.on('unhandledRejection',

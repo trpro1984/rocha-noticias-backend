@@ -145,16 +145,73 @@ const FUENTES = [
     prioridad: 'alta'
   },
 
-  // ===== FACEBOOK (Comentado - bloqueado por anti-bot) =====
-  // Si quieres activarlo, descomenta estas líneas pero puede dar errores 400
-  /*
+  // ===== FACEBOOK (sin ScraperAPI - puede tener bloqueos ocasionales) =====
+  {
+    nombre: 'Facebook - INF Central',
+    url: 'https://m.facebook.com/INFCentral',
+    tipo: 'facebook',
+    prioridad: 'muy-alta'
+  },
   {
     nombre: 'Facebook - Rocha Noticias',
     url: 'https://m.facebook.com/rochanoticias',
     tipo: 'facebook',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Facebook - La Paloma Digital',
+    url: 'https://m.facebook.com/lapalomadigital',
+    tipo: 'facebook',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'Facebook - Rocha Total',
+    url: 'https://m.facebook.com/RochaTotal',
+    tipo: 'facebook',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'Facebook - Intendencia Rocha',
+    url: 'https://m.facebook.com/IntendenciadeRocha',
+    tipo: 'facebook',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'Facebook - Punta del Diablo',
+    url: 'https://m.facebook.com/PuntadelDiabloUruguay',
+    tipo: 'facebook',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'Facebook - Cabo Polonio',
+    url: 'https://m.facebook.com/CaboPolonioOficial',
+    tipo: 'facebook',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'Facebook - Chuy Noticias',
+    url: 'https://m.facebook.com/ChuyNoticias',
+    tipo: 'facebook',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'Facebook - Barra de Valizas',
+    url: 'https://m.facebook.com/BarradeValizasUY',
+    tipo: 'facebook',
     prioridad: 'baja'
   },
-  */
+  {
+    nombre: 'Facebook - Castillos Rocha',
+    url: 'https://m.facebook.com/CastillosRocha',
+    tipo: 'facebook',
+    prioridad: 'baja'
+  },
+  {
+    nombre: 'Facebook - La Pedrera Info',
+    url: 'https://m.facebook.com/LaPedreraInfo',
+    tipo: 'facebook',
+    prioridad: 'baja'
+  },
 
   // ===== FUENTES OFICIALES =====
   {
@@ -340,46 +397,74 @@ async function scrapearFacebook(fuente) {
   try {
     console.log(`📘 ${fuente.nombre}`);
     
-    const response = await axios.get(fuente.url, {
+    let targetUrl = fuente.url;
+    
+    // Si tenemos ScraperAPI, usarla para bypass anti-bot
+    if (SCRAPER_API_KEY) {
+      targetUrl = `http://api.scraperapi.com?api_key=${SCRAPER_API_KEY}&url=${encodeURIComponent(fuente.url)}`;
+      console.log(`🔐 Usando ScraperAPI para ${fuente.nombre}`);
+    }
+    
+    const response = await axios.get(targetUrl, {
       headers: {
         'User-Agent': getRandomUserAgent(),
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'es-UY,es;q=0.9'
       },
-      timeout: 15000
+      timeout: 20000
     });
 
     const $ = cheerio.load(response.data);
     const noticias = [];
     const visitedUrls = new Set();
 
-    $('article, div[data-ft]').each((i, elem) => {
-      if (i >= 20) return false;
-      
-      const texto = $(elem).text().trim();
-      const linkElem = $(elem).find('a[href*="/posts/"], a[href*="/story.php"]').first();
-      
-      if (!linkElem.length || !texto) return;
-      
-      let url = linkElem.attr('href');
-      if (url.startsWith('/')) url = 'https://m.facebook.com' + url;
-      
-      if (visitedUrls.has(url)) return;
-      visitedUrls.add(url);
-      
-      if (contieneKeywords(texto)) {
-        noticias.push({
-          titulo: texto.substring(0, 200),
-          url: url.split('?')[0],
-          fuente: fuente.nombre
-        });
-      }
+    // Facebook mobile tiene varias estructuras posibles
+    const selectors = [
+      'article',
+      'div[data-ft]',
+      'div[role="article"]',
+      'div[data-testid="post_message"]'
+    ];
+
+    selectors.forEach(selector => {
+      $(selector).each((i, elem) => {
+        if (i >= 20) return false;
+        
+        const texto = $(elem).text().trim();
+        if (!texto || texto.length < 50) return; // Muy corto, probablemente no es noticia
+        
+        const linkElem = $(elem).find('a[href*="/posts/"], a[href*="/story.php"], a[href*="/permalink/"]').first();
+        
+        if (!linkElem.length) return;
+        
+        let url = linkElem.attr('href');
+        if (url.startsWith('/')) url = 'https://m.facebook.com' + url;
+        
+        // Limpiar parámetros de tracking
+        url = url.split('?')[0].split('&')[0];
+        
+        if (visitedUrls.has(url)) return;
+        visitedUrls.add(url);
+        
+        if (contieneKeywords(texto)) {
+          noticias.push({
+            titulo: texto.substring(0, 200),
+            url,
+            fuente: fuente.nombre,
+            resumen: texto.substring(200, 400)
+          });
+        }
+      });
     });
 
     console.log(`✅ ${fuente.nombre}: ${noticias.length} posts`);
     return noticias;
   } catch (error) {
-    console.error(`❌ ${fuente.nombre}: ${error.message}`);
+    if (error.response?.status === 400 || error.response?.status === 403) {
+      console.log(`🚫 ${fuente.nombre}: Bloqueado por Facebook (considera usar ScraperAPI)`);
+    } else {
+      console.error(`❌ ${fuente.nombre}: ${error.message}`);
+    }
     return [];
   }
 }
@@ -510,9 +595,14 @@ cron.schedule('*/15 * * * *', async () => {
   await monitorearFuentes(FUENTES.filter(f => f.prioridad === 'alta'), 'Importantes');
 });
 
-cron.schedule('0 * * * *', async () => {
-  console.log('\n⏰ MONITOREO SECUNDARIO (1 hora)');
+cron.schedule('*/30 * * * *', async () => {
+  console.log('\n⏰ MONITOREO SECUNDARIO (30 min)');
   await monitorearFuentes(FUENTES.filter(f => f.prioridad === 'media'), 'Secundarias');
+});
+
+cron.schedule('0 */2 * * *', async () => {
+  console.log('\n⏰ MONITOREO BAJA PRIORIDAD (2 horas)');
+  await monitorearFuentes(FUENTES.filter(f => f.prioridad === 'baja'), 'Baja prioridad');
 });
 
 cron.schedule('0 3 * * *', () => {
@@ -598,7 +688,8 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(), 
-    fuentes_activas: FUENTES.length
+    fuentes_activas: FUENTES.length,
+    scraper_api_activo: !!SCRAPER_API_KEY
   });
 });
 
@@ -624,6 +715,7 @@ app.listen(PORT, () => {
 ║  🚀 Puerto ${PORT}                                        ║
 ║  📡 ${FUENTES.length} fuentes activas                            ║
 ║  🔔 Notificaciones: ntfy.sh/rocha-noticias           ║
+║  🔐 ScraperAPI: ${SCRAPER_API_KEY ? 'ACTIVO' : 'DESACTIVADO'}                        ║
 ╚═══════════════════════════════════════════════════════╝
   `);
   

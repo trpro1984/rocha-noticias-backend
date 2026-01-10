@@ -125,10 +125,9 @@ const FUENTES = [
 
   // ===== MEDIOS NACIONALES =====
   {
-    nombre: 'El Observador',
-    url: 'https://www.elobservador.com.uy/search?query=rocha',
-    tipo: 'scraping',
-    selector: '.story-title a, article h2 a, .headline a, .article-link',
+    nombre: 'El Observador (vía Google News)',
+    url: 'https://news.google.com/rss/search?q=site:elobservador.com.uy+Rocha+when:2d&hl=es-UY&gl=UY&ceid=UY:es-419',
+    tipo: 'rss',
     prioridad: 'muy-alta'
   },
   {

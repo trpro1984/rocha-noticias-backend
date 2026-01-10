@@ -1,4 +1,4 @@
-// server.js - Backend COMPLETO con Twitter/X integrado
+// server.js - Backend CORREGIDO con Twitter/X y Facebook
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -10,12 +10,16 @@ const cors = require('cors');
 
 const app = express();
 const parser = new Parser({
-  timeout: 10000,
+  timeout: 15000,
   headers: {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
   }
 });
 const PORT = process.env.PORT || 3000;
+
+// Variables de entorno opcionales
+const TWITTER_BEARER_TOKEN = process.env.TWITTER_BEARER_TOKEN || null;
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || null;
 
 app.use(cors());
 app.use(express.json());
@@ -36,7 +40,8 @@ db.serialize(() => {
     localidades TEXT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     hash TEXT UNIQUE,
-    imagenUrl TEXT
+    imagenUrl TEXT,
+    autor TEXT
   )`);
 
   db.run(`CREATE TABLE IF NOT EXISTS dispositivos (
@@ -53,18 +58,21 @@ const KEYWORDS = {
   localidades: [
     'la paloma', 'la pedrera', 'barra de valizas', 'punta del diablo',
     'aguas dulces', 'chuy', 'castillos', 'lascano', 'cebollatí',
-    '19 de abril', 'la coronilla', 'cabo polonio', 'valizas', 'la esmeralda'
+    '19 de abril', 'la coronilla', 'cabo polonio', 'valizas', 'la esmeralda',
+    'santa isabel de la pedrera', 'océano azul', 'la aguada'
   ],
   categorias: {
-    turismo: ['turismo', 'playa', 'temporada', 'guardavidas', 'aeropuerto', 'hotel', 'visitantes'],
-    politica: ['intendencia', 'municipio', 'intendente', 'alcalde', 'junta', 'edil'],
-    seguridad: ['policía', 'bomberos', 'siniestro', 'accidente', 'rapiña', 'hurto', 'rescate'],
-    deportes: ['rocha fc', 'fútbol', 'deporte', 'campeonato', 'torneo'],
-    eventos: ['festival', 'evento', 'feria', 'concierto', 'espectáculo']
+    turismo: ['turismo', 'playa', 'temporada', 'guardavidas', 'aeropuerto', 'hotel', 'visitantes', 'balneario'],
+    politica: ['intendencia', 'municipio', 'intendente', 'alcalde', 'junta', 'edil', 'gobierno'],
+    seguridad: ['policía', 'bomberos', 'siniestro', 'accidente', 'rapiña', 'hurto', 'rescate', 'emergencia'],
+    deportes: ['rocha fc', 'fútbol', 'deporte', 'campeonato', 'torneo', 'liga'],
+    eventos: ['festival', 'evento', 'feria', 'concierto', 'espectáculo', 'carnaval'],
+    ambiente: ['medio ambiente', 'contaminación', 'playa', 'ecosistema', 'naturaleza', 'fauna']
   }
 };
 
 const FUENTES = [
+  // ===== FUENTES LOCALES PRIORITARIAS =====
   {
     nombre: 'Rocha Noticias',
     url: 'https://rochanoticias.com',
@@ -80,24 +88,19 @@ const FUENTES = [
     prioridad: 'muy-alta'
   },
   {
-    nombre: 'La Paloma Hoy',
-    url: 'https://lapalomahoy.com',
-    tipo: 'scraping',
-    selector: '.post-title a, article h2 a, .entry-title a',
-    prioridad: 'muy-alta'
-  },
-  {
     nombre: 'Rocha Total',
     url: 'https://rochatotal.com',
     tipo: 'scraping',
     selector: '.entry-title a, h2.title a, article h2 a',
     prioridad: 'alta'
   },
+
+  // ===== MEDIOS NACIONALES =====
   {
-    nombre: 'El País - Rocha',
-    url: 'https://www.elpais.com.uy/noticias/rocha',
+    nombre: 'El Observador',
+    url: 'https://www.elobservador.com.uy/tags/rocha',
     tipo: 'scraping',
-    selector: 'article h2 a, .headline a, .article-title a, h3 a',
+    selector: '.article-title a, h2 a, .headline a, .story-title a',
     prioridad: 'muy-alta'
   },
   {
@@ -108,41 +111,22 @@ const FUENTES = [
     prioridad: 'muy-alta'
   },
   {
-    nombre: 'Subrayado',
-    url: 'https://www.subrayado.com.uy/sitio/busqueda?texto=rocha',
-    tipo: 'scraping',
-    selector: '.article-title a, h2 a, .titulo a',
-    prioridad: 'muy-alta'
-  },
-  {
-    nombre: 'El Observador - Rocha',
-    url: 'https://www.elobservador.com.uy/buscar?q=Rocha',
-    tipo: 'scraping',
-    selector: '.article-title a, h2 a, .headline a',
-    prioridad: 'alta'
-  },
-  {
     nombre: 'La Diaria',
-    url: 'https://ladiaria.com.uy/search/?q=rocha',
+    url: 'https://ladiaria.com.uy/articulo/tag/rocha/',
     tipo: 'scraping',
     selector: 'article h2 a, .article-title a, h3 a',
     prioridad: 'alta'
   },
+
+  // ===== GOOGLE NEWS RSS (siempre funcionan) =====
   {
-    nombre: 'Telemundo',
-    url: 'https://www.telemundo.com.uy',
-    tipo: 'scraping',
-    selector: 'article h2 a, .entry-title a, .post-title a',
-    prioridad: 'media'
-  },
-  {
-    nombre: 'Google News - Rocha Hoy',
+    nombre: 'Google News - Rocha',
     url: 'https://news.google.com/rss/search?q=Rocha+Uruguay+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
     tipo: 'rss',
     prioridad: 'muy-alta'
   },
   {
-    nombre: 'Google News - La Paloma Hoy',
+    nombre: 'Google News - La Paloma',
     url: 'https://news.google.com/rss/search?q=%22La+Paloma%22+Rocha+when:1d&hl=es-UY&gl=UY&ceid=UY:es-419',
     tipo: 'rss',
     prioridad: 'muy-alta'
@@ -171,6 +155,8 @@ const FUENTES = [
     tipo: 'rss',
     prioridad: 'media'
   },
+
+  // ===== FUENTES OFICIALES =====
   {
     nombre: 'Intendencia de Rocha',
     url: 'https://rocha.gub.uy',
@@ -185,43 +171,45 @@ const FUENTES = [
     selector: '.news-title a, article h2 a, .noticia a',
     prioridad: 'media'
   },
+
+  // ===== TWITTER/X via RapidAPI (si tienes API key) =====
   {
-    nombre: 'X - Rocha Uruguay',
-    url: 'https://nitter.net/search/rss?f=tweets&q=Rocha+Uruguay+-filter:retweets+-filter:replies',
-    tipo: 'rss',
+    nombre: 'Twitter - Rocha',
+    url: 'twitter-search',
+    tipo: 'twitter-api',
+    query: 'Rocha Uruguay -filter:retweets',
+    prioridad: 'alta',
+    activo: !!TWITTER_BEARER_TOKEN
+  },
+  {
+    nombre: 'Twitter - La Paloma',
+    url: 'twitter-search',
+    tipo: 'twitter-api',
+    query: '"La Paloma" Rocha -filter:retweets',
+    prioridad: 'media',
+    activo: !!TWITTER_BEARER_TOKEN
+  },
+
+  // ===== FACEBOOK (vía scraping público) =====
+  {
+    nombre: 'Facebook - Rocha Noticias',
+    url: 'https://m.facebook.com/rochanoticias',
+    tipo: 'facebook',
     prioridad: 'alta'
   },
   {
-    nombre: 'X - Hashtag #Rocha',
-    url: 'https://nitter.net/search/rss?f=tweets&q=%23Rocha+%23Uruguay+-filter:retweets',
-    tipo: 'rss',
-    prioridad: 'alta'
-  },
-  {
-    nombre: 'X - La Paloma',
-    url: 'https://nitter.net/search/rss?f=tweets&q=%22La+Paloma%22+Rocha+-filter:retweets',
-    tipo: 'rss',
-    prioridad: 'media'
-  },
-  {
-    nombre: 'X - Punta del Diablo',
-    url: 'https://nitter.net/search/rss?f=tweets&q=%22Punta+del+Diablo%22+-filter:retweets',
-    tipo: 'rss',
-    prioridad: 'media'
-  },
-  {
-    nombre: 'X - Cabo Polonio',
-    url: 'https://nitter.net/search/rss?f=tweets&q=%22Cabo+Polonio%22+-filter:retweets',
-    tipo: 'rss',
+    nombre: 'Facebook - Intendencia Rocha',
+    url: 'https://m.facebook.com/IntendenciadeRocha',
+    tipo: 'facebook',
     prioridad: 'media'
   }
 ];
 
 const USER_AGENTS = [
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
 ];
 
 function getRandomUserAgent() {
@@ -274,36 +262,43 @@ function esNoticiaReciente(fechaStr) {
   }
 }
 
-function limpiarTextoTweet(texto) {
+function limpiarTexto(texto) {
   if (!texto) return texto;
   texto = texto.replace(/https?:\/\/[^\s]+/g, '');
-  const menciones = texto.match(/@\w+/g);
-  if (menciones && menciones.length > 1) {
-    for (let i = 1; i < menciones.length; i++) {
-      texto = texto.replace(menciones[i], '');
-    }
-  }
-  texto = texto.replace(/(\s#\w+){4,}$/g, '');
   texto = texto.replace(/^RT\s+/i, '');
   texto = texto.replace(/\s+/g, ' ').trim();
   return texto;
 }
 
+// ===== SCRAPING MEJORADO CON ANTI-DETECCIÓN =====
 async function scrapearSitio(fuente) {
   try {
     console.log(`📡 Scrapeando: ${fuente.nombre}`);
+    
+    const headers = {
+      'User-Agent': getRandomUserAgent(),
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'es-UY,es;q=0.9,en;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Cache-Control': 'max-age=0'
+    };
+
     const response = await axios.get(fuente.url, {
-      headers: {
-        'User-Agent': getRandomUserAgent(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'es-UY,es;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1'
-      },
+      headers,
       timeout: 15000,
-      maxRedirects: 5
+      maxRedirects: 5,
+      validateStatus: (status) => status < 500
     });
+
+    if (response.status === 403 || response.status === 404) {
+      console.log(`⚠️ ${fuente.nombre}: Acceso bloqueado (${response.status})`);
+      return [];
+    }
 
     const $ = cheerio.load(response.data);
     const noticias = [];
@@ -313,15 +308,19 @@ async function scrapearSitio(fuente) {
       if (i >= 30) return false;
       const titulo = $(elem).text().trim();
       let url = $(elem).attr('href');
+      
       if (!url || !titulo) return;
+      
       if (url.startsWith('/')) {
         const baseUrl = new URL(fuente.url);
         url = `${baseUrl.protocol}//${baseUrl.host}${url}`;
       } else if (!url.startsWith('http')) {
         return;
       }
+      
       if (visitedUrls.has(url)) return;
       visitedUrls.add(url);
+      
       if (contieneKeywords(titulo)) {
         noticias.push({
           titulo: titulo.substring(0, 200),
@@ -334,11 +333,16 @@ async function scrapearSitio(fuente) {
     console.log(`✅ ${fuente.nombre}: ${noticias.length} noticias relevantes`);
     return noticias;
   } catch (error) {
-    console.error(`❌ Error en ${fuente.nombre}:`, error.message);
+    if (error.code === 'ENOTFOUND') {
+      console.error(`❌ ${fuente.nombre}: Sitio no encontrado`);
+    } else {
+      console.error(`❌ Error en ${fuente.nombre}:`, error.message);
+    }
     return [];
   }
 }
 
+// ===== RSS PARSER =====
 async function parsearRSS(fuente) {
   try {
     console.log(`📡 RSS: ${fuente.nombre}`);
@@ -357,23 +361,20 @@ async function parsearRSS(fuente) {
       if (!url || visitedUrls.has(url)) return;
       visitedUrls.add(url);
       
-      if (!esNoticiaReciente(fecha)) {
-        console.log(`⏭️ Saltando noticia antigua: ${titulo.substring(0, 50)}...`);
-        return;
-      }
+      if (!esNoticiaReciente(fecha)) return;
       
       if (contieneKeywords(textoCompleto)) {
         noticias.push({
-          titulo: limpiarTextoTweet(titulo).substring(0, 200),
+          titulo: limpiarTexto(titulo).substring(0, 200),
           url,
-          resumen: limpiarTextoTweet(resumen).substring(0, 400),
+          resumen: limpiarTexto(resumen).substring(0, 400),
           fuente: fuente.nombre,
           fechaPublicacion: fecha
         });
       }
     });
 
-    console.log(`✅ ${fuente.nombre}: ${noticias.length} noticias relevantes (últimos 7 días)`);
+    console.log(`✅ ${fuente.nombre}: ${noticias.length} noticias relevantes`);
     return noticias;
   } catch (error) {
     console.error(`❌ Error en RSS ${fuente.nombre}:`, error.message);
@@ -381,6 +382,101 @@ async function parsearRSS(fuente) {
   }
 }
 
+// ===== TWITTER API (OPCIONAL) =====
+async function buscarEnTwitter(fuente) {
+  if (!TWITTER_BEARER_TOKEN || !fuente.activo) return [];
+  
+  try {
+    console.log(`🐦 Twitter: ${fuente.query}`);
+    
+    const response = await axios.get('https://api.twitter.com/2/tweets/search/recent', {
+      headers: {
+        'Authorization': `Bearer ${TWITTER_BEARER_TOKEN}`
+      },
+      params: {
+        query: fuente.query,
+        max_results: 20,
+        'tweet.fields': 'created_at,author_id,public_metrics',
+        'user.fields': 'username,name'
+      },
+      timeout: 10000
+    });
+
+    const noticias = [];
+    if (response.data.data) {
+      response.data.data.forEach(tweet => {
+        if (contieneKeywords(tweet.text)) {
+          noticias.push({
+            titulo: limpiarTexto(tweet.text).substring(0, 200),
+            url: `https://twitter.com/i/web/status/${tweet.id}`,
+            fuente: fuente.nombre,
+            fechaPublicacion: tweet.created_at
+          });
+        }
+      });
+    }
+
+    console.log(`✅ ${fuente.nombre}: ${noticias.length} tweets relevantes`);
+    return noticias;
+  } catch (error) {
+    console.error(`❌ Error en Twitter ${fuente.nombre}:`, error.message);
+    return [];
+  }
+}
+
+// ===== FACEBOOK SCRAPING =====
+async function scrapearFacebook(fuente) {
+  try {
+    console.log(`📘 Facebook: ${fuente.nombre}`);
+    
+    const response = await axios.get(fuente.url, {
+      headers: {
+        'User-Agent': getRandomUserAgent(),
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'es-UY,es;q=0.9'
+      },
+      timeout: 15000
+    });
+
+    const $ = cheerio.load(response.data);
+    const noticias = [];
+    const visitedUrls = new Set();
+
+    // Facebook mobile tiene una estructura específica
+    $('article, div[data-ft]').each((i, elem) => {
+      if (i >= 20) return false;
+      
+      const texto = $(elem).text().trim();
+      const linkElem = $(elem).find('a[href*="/posts/"], a[href*="/story.php"]').first();
+      
+      if (!linkElem.length || !texto) return;
+      
+      let url = linkElem.attr('href');
+      if (url.startsWith('/')) {
+        url = 'https://m.facebook.com' + url;
+      }
+      
+      if (visitedUrls.has(url)) return;
+      visitedUrls.add(url);
+      
+      if (contieneKeywords(texto)) {
+        noticias.push({
+          titulo: texto.substring(0, 200),
+          url: url.split('?')[0], // Limpiar parámetros
+          fuente: fuente.nombre
+        });
+      }
+    });
+
+    console.log(`✅ ${fuente.nombre}: ${noticias.length} posts relevantes`);
+    return noticias;
+  } catch (error) {
+    console.error(`❌ Error en Facebook ${fuente.nombre}:`, error.message);
+    return [];
+  }
+}
+
+// ===== GUARDADO EN BASE DE DATOS =====
 function guardarNoticia(noticia) {
   return new Promise((resolve, reject) => {
     const hash = generarHash(noticia.titulo);
@@ -416,6 +512,7 @@ function guardarNoticia(noticia) {
   });
 }
 
+// ===== NOTIFICACIONES PUSH =====
 async function enviarNotificacion(noticia, categoria) {
   try {
     const emojiCategoria = {
@@ -424,6 +521,7 @@ async function enviarNotificacion(noticia, categoria) {
       seguridad: '👮',
       deportes: '⚽',
       eventos: '🎪',
+      ambiente: '🌿',
       general: '📰'
     };
 
@@ -443,6 +541,7 @@ async function enviarNotificacion(noticia, categoria) {
   }
 }
 
+// ===== MONITOREO DE FUENTES =====
 async function monitorearFuentesEspecificas(fuentes, descripcion) {
   console.log(`\n🔍 ${descripcion}`);
   let noticiasNuevas = 0;
@@ -451,8 +550,13 @@ async function monitorearFuentesEspecificas(fuentes, descripcion) {
   for (const fuente of fuentes) {
     try {
       let noticias = [];
+      
       if (fuente.tipo === 'rss') {
         noticias = await parsearRSS(fuente);
+      } else if (fuente.tipo === 'twitter-api') {
+        noticias = await buscarEnTwitter(fuente);
+      } else if (fuente.tipo === 'facebook') {
+        noticias = await scrapearFacebook(fuente);
       } else {
         noticias = await scrapearSitio(fuente);
       }
@@ -472,7 +576,8 @@ async function monitorearFuentesEspecificas(fuentes, descripcion) {
         }
       }
 
-      const delay = 2000 + Math.random() * 2000;
+      // Delay aleatorio entre fuentes
+      const delay = 2000 + Math.random() * 3000;
       await new Promise(resolve => setTimeout(resolve, delay));
     } catch (error) {
       console.error(`❌ Error procesando ${fuente.nombre}:`, error.message);
@@ -483,55 +588,48 @@ async function monitorearFuentesEspecificas(fuentes, descripcion) {
   return noticiasNuevas;
 }
 
-cron.schedule('*/3 * * * *', async () => {
-  console.log('\n⏰ ═══ MONITOREO PRIORITARIO (cada 3 min) ═══');
+// ===== CRON JOBS =====
+cron.schedule('*/5 * * * *', async () => {
+  console.log('\n⏰ ═══ MONITOREO PRIORITARIO (cada 5 min) ═══');
   const fuentesPrioritarias = FUENTES.filter(f => f.prioridad === 'muy-alta');
   await monitorearFuentesEspecificas(fuentesPrioritarias, 'Fuentes muy prioritarias');
 });
 
-cron.schedule('*/10 * * * *', async () => {
-  console.log('\n⏰ ═══ MONITOREO REGULAR (cada 10 min) ═══');
+cron.schedule('*/15 * * * *', async () => {
+  console.log('\n⏰ ═══ MONITOREO REGULAR (cada 15 min) ═══');
   const fuentesAltas = FUENTES.filter(f => f.prioridad === 'alta');
   await monitorearFuentesEspecificas(fuentesAltas, 'Fuentes importantes');
 });
 
-cron.schedule('*/30 * * * *', async () => {
-  console.log('\n⏰ ═══ MONITOREO OFICIAL (cada 30 min) ═══');
+cron.schedule('0 * * * *', async () => {
+  console.log('\n⏰ ═══ MONITOREO OFICIAL (cada hora) ═══');
   const fuentesMedias = FUENTES.filter(f => f.prioridad === 'media');
-  await monitorearFuentesEspecificas(fuentesMedias, 'Fuentes oficiales');
+  await monitorearFuentesEspecificas(fuentesMedias, 'Fuentes oficiales y secundarias');
 });
 
 cron.schedule('0 3 * * *', () => {
-  console.log('\n🧹 Ejecutando limpieza diaria...');
-  db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-60 days")', function(err) {
-    if (err) {
-      console.error('❌ Error en limpieza:', err);
-    } else {
-      console.log(`✅ Limpieza completada: ${this.changes} noticias antiguas eliminadas`);
-    }
-  });
-});
-
-cron.schedule('0 * * * *', () => {
-  console.log('\n🧹 Limpieza automática cada hora...');
+  console.log('\n🧹 Limpieza diaria de noticias antiguas...');
   db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-30 days")', function(err) {
     if (err) {
       console.error('❌ Error en limpieza:', err);
-    } else if (this.changes > 0) {
-      console.log(`✅ Eliminadas ${this.changes} noticias antiguas (>30 días)`);
+    } else {
+      console.log(`✅ Limpieza completada: ${this.changes} noticias eliminadas`);
     }
   });
 });
 
+// ===== API ENDPOINTS =====
 app.get('/api/noticias', (req, res) => {
   const limite = parseInt(req.query.limite) || 50;
   const categoria = req.query.categoria;
   let sql = 'SELECT * FROM noticias';
   let params = [];
+  
   if (categoria && categoria !== 'todas') {
     sql += ' WHERE categoria = ?';
     params.push(categoria);
   }
+  
   sql += ' ORDER BY timestamp DESC LIMIT ?';
   params.push(limite);
 

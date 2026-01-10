@@ -126,9 +126,9 @@ const FUENTES = [
   // ===== MEDIOS NACIONALES =====
   {
     nombre: 'El Observador',
-    url: 'https://www.elobservador.com.uy/buscar?q=rocha',
+    url: 'https://www.elobservador.com.uy/search?query=rocha',
     tipo: 'scraping',
-    selector: '.story-title a, article h2 a, .headline a',
+    selector: '.story-title a, article h2 a, .headline a, .article-link',
     prioridad: 'muy-alta'
   },
   {
@@ -146,7 +146,27 @@ const FUENTES = [
     prioridad: 'alta'
   },
 
-  // ===== FACEBOOK (sin ScraperAPI - puede tener bloqueos ocasionales) =====
+  // ===== FACEBOOK via RSS-Bridge (bypass anti-bot gratis) =====
+  {
+    nombre: 'Facebook INF Central (RSS)',
+    url: 'https://rss-bridge.org/bridge01/?action=display&bridge=Facebook&context=User&u=INFCentral&format=Atom',
+    tipo: 'rss',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Facebook Rocha Noticias (RSS)',
+    url: 'https://rss-bridge.org/bridge01/?action=display&bridge=Facebook&context=User&u=rochanoticias&format=Atom',
+    tipo: 'rss',
+    prioridad: 'muy-alta'
+  },
+  {
+    nombre: 'Facebook La Paloma Digital (RSS)',
+    url: 'https://rss-bridge.org/bridge01/?action=display&bridge=Facebook&context=User&u=lapalomadigital&format=Atom',
+    tipo: 'rss',
+    prioridad: 'alta'
+  },
+
+  // ===== FACEBOOK (scraping directo - puede fallar) =====
   {
     nombre: 'Facebook - INF Central',
     url: 'https://m.facebook.com/INFCentral',
@@ -212,6 +232,26 @@ const FUENTES = [
     url: 'https://m.facebook.com/LaPedreraInfo',
     tipo: 'facebook',
     prioridad: 'baja'
+  },
+
+  // ===== TWITTER/X via Nitter (100% gratis, sin API) =====
+  {
+    nombre: 'Twitter - Rocha Uruguay',
+    url: 'https://nitter.poast.org/search/rss?f=tweets&q=Rocha+Uruguay+-filter:retweets&since_time=24h',
+    tipo: 'rss',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'Twitter - La Paloma',
+    url: 'https://nitter.poast.org/search/rss?f=tweets&q=%22La+Paloma%22+Rocha+-filter:retweets&since_time=24h',
+    tipo: 'rss',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'Twitter - Punta del Diablo',
+    url: 'https://nitter.poast.org/search/rss?f=tweets&q=%22Punta+del+Diablo%22+-filter:retweets&since_time=24h',
+    tipo: 'rss',
+    prioridad: 'media'
   },
 
   // ===== FUENTES OFICIALES =====

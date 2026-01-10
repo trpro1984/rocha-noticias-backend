@@ -125,7 +125,7 @@ const FUENTES = [
   // ===== MEDIOS NACIONALES =====
   {
     nombre: 'El Observador',
-    url: 'https://www.elobservador.com.uy/tags/rocha',
+    url: 'https://www.elobservador.com.uy/buscar?q=rocha',
     tipo: 'scraping',
     selector: '.story-title a, article h2 a, .headline a',
     prioridad: 'muy-alta'
@@ -139,31 +139,22 @@ const FUENTES = [
   },
   {
     nombre: 'La Diaria',
-    url: 'https://ladiaria.com.uy/articulo/tag/rocha/',
+    url: 'https://ladiaria.com.uy/buscar/?q=rocha',
     tipo: 'scraping',
     selector: 'article h2 a, .article-title a',
     prioridad: 'alta'
   },
 
-  // ===== FACEBOOK (Público) =====
+  // ===== FACEBOOK (Comentado - bloqueado por anti-bot) =====
+  // Si quieres activarlo, descomenta estas líneas pero puede dar errores 400
+  /*
   {
     nombre: 'Facebook - Rocha Noticias',
     url: 'https://m.facebook.com/rochanoticias',
     tipo: 'facebook',
-    prioridad: 'alta'
+    prioridad: 'baja'
   },
-  {
-    nombre: 'Facebook - Intendencia Rocha',
-    url: 'https://m.facebook.com/IntendenciadeRocha',
-    tipo: 'facebook',
-    prioridad: 'media'
-  },
-  {
-    nombre: 'Facebook - La Paloma Digital',
-    url: 'https://m.facebook.com/lapalomadigital',
-    tipo: 'facebook',
-    prioridad: 'media'
-  },
+  */
 
   // ===== FUENTES OFICIALES =====
   {
@@ -428,8 +419,19 @@ function guardarNoticia(noticia) {
   });
 }
 
+// Control de rate limit para notificaciones
+let ultimaNotificacion = 0;
+const DELAY_NOTIFICACIONES = 2000; // 2 segundos entre notificaciones
+
 async function enviarNotificacion(noticia, categoria) {
   try {
+    // Rate limiting: esperar si enviamos muy rápido
+    const ahora = Date.now();
+    const tiempoEspera = Math.max(0, DELAY_NOTIFICACIONES - (ahora - ultimaNotificacion));
+    if (tiempoEspera > 0) {
+      await new Promise(resolve => setTimeout(resolve, tiempoEspera));
+    }
+    
     const emojiCategoria = {
       turismo: '🏖️', politica: '🏛️', seguridad: '👮',
       deportes: '⚽', eventos: '🎪', ambiente: '🌿', general: '📰'
@@ -444,9 +446,14 @@ async function enviarNotificacion(noticia, categoria) {
       click: noticia.url
     }, { timeout: 5000 });
     
+    ultimaNotificacion = Date.now();
     console.log(`🔔 Notificación: ${noticia.titulo.substring(0, 50)}...`);
   } catch (error) {
-    console.error('⚠️ Error notificación:', error.message);
+    if (error.response?.status === 429) {
+      console.log('⏳ Rate limit alcanzado, notificación omitida');
+    } else {
+      console.error('⚠️ Error notificación:', error.message);
+    }
   }
 }
 

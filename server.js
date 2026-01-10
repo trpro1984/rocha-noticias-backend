@@ -1,4 +1,4 @@
-// server.js - Backend COMPLETO para monitoreo de noticias de Rocha
+// server.js - Backend COMPLETO con Twitter/X integrado
 const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
@@ -184,6 +184,36 @@ const FUENTES = [
     tipo: 'scraping',
     selector: '.news-title a, article h2 a, .noticia a',
     prioridad: 'media'
+  },
+  {
+    nombre: 'X - Rocha Uruguay',
+    url: 'https://nitter.net/search/rss?f=tweets&q=Rocha+Uruguay+-filter:retweets+-filter:replies',
+    tipo: 'rss',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'X - Hashtag #Rocha',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%23Rocha+%23Uruguay+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'X - La Paloma',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%22La+Paloma%22+Rocha+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'X - Punta del Diablo',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%22Punta+del+Diablo%22+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'X - Cabo Polonio',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%22Cabo+Polonio%22+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'media'
   }
 ];
 
@@ -234,17 +264,31 @@ function contieneKeywords(texto) {
 
 function esNoticiaReciente(fechaStr) {
   if (!fechaStr) return true;
-  
   try {
     const fechaNoticia = new Date(fechaStr);
     const ahora = new Date();
     const diasDiferencia = (ahora - fechaNoticia) / (1000 * 60 * 60 * 24);
-    
     return diasDiferencia <= 7;
   } catch (error) {
     return true;
   }
 }
+
+function limpiarTextoTweet(texto) {
+  if (!texto) return texto;
+  texto = texto.replace(/https?:\/\/[^\s]+/g, '');
+  const menciones = texto.match(/@\w+/g);
+  if (menciones && menciones.length > 1) {
+    for (let i = 1; i < menciones.length; i++) {
+      texto = texto.replace(menciones[i], '');
+    }
+  }
+  texto = texto.replace(/(\s#\w+){4,}$/g, '');
+  texto = texto.replace(/^RT\s+/i, '');
+  texto = texto.replace(/\s+/g, ' ').trim();
+  return texto;
+}
+
 async function scrapearSitio(fuente) {
   try {
     console.log(`📡 Scrapeando: ${fuente.nombre}`);
@@ -304,7 +348,6 @@ async function parsearRSS(fuente) {
 
     feed.items.forEach((item, i) => {
       if (i >= 30) return;
-      
       const titulo = item.title || '';
       const resumen = item.contentSnippet || item.description || item.content || '';
       const textoCompleto = `${titulo} ${resumen}`;
@@ -314,7 +357,6 @@ async function parsearRSS(fuente) {
       if (!url || visitedUrls.has(url)) return;
       visitedUrls.add(url);
       
-      // ✅ NUEVO: Verificar que sea noticia reciente
       if (!esNoticiaReciente(fecha)) {
         console.log(`⏭️ Saltando noticia antigua: ${titulo.substring(0, 50)}...`);
         return;
@@ -322,9 +364,9 @@ async function parsearRSS(fuente) {
       
       if (contieneKeywords(textoCompleto)) {
         noticias.push({
-          titulo: titulo.substring(0, 200),
+          titulo: limpiarTextoTweet(titulo).substring(0, 200),
           url,
-          resumen: resumen.substring(0, 400),
+          resumen: limpiarTextoTweet(resumen).substring(0, 400),
           fuente: fuente.nombre,
           fechaPublicacion: fecha
         });
@@ -346,7 +388,6 @@ function guardarNoticia(noticia) {
     const categoria = detectarCategoria(noticia.titulo + ' ' + (noticia.resumen || ''));
     const id = crypto.randomUUID();
 
-    // Si la noticia tiene fecha de publicación, usarla; si no, usar fecha actual
     const timestamp = noticia.fechaPublicacion 
       ? new Date(noticia.fechaPublicacion).toISOString().slice(0, 19).replace('T', ' ')
       : null;
@@ -470,7 +511,7 @@ cron.schedule('0 3 * * *', () => {
     }
   });
 });
-// Cada hora: Limpiar noticias de más de 30 días
+
 cron.schedule('0 * * * *', () => {
   console.log('\n🧹 Limpieza automática cada hora...');
   db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-30 days")', function(err) {
@@ -587,45 +628,27 @@ app.get('/api/stats', (req, res) => {
     });
   });
 });
-// Endpoint para limpiar noticias antiguas manualmente
+
 app.get('/api/admin/limpiar', (req, res) => {
   console.log('🧹 Limpieza manual solicitada...');
-  
   db.run('DELETE FROM noticias WHERE timestamp < datetime("now", "-7 days")', function(err) {
     if (err) {
       console.error('❌ Error en limpieza:', err);
       res.status(500).json({ error: err.message });
     } else {
       console.log(`✅ Eliminadas ${this.changes} noticias antiguas`);
-      res.json({ 
-        success: true, 
-        eliminadas: this.changes,
-        mensaje: `Se eliminaron ${this.changes} noticias de más de 7 días`
-      });
+      res.json({ success: true, eliminadas: this.changes, mensaje: `Se eliminaron ${this.changes} noticias de más de 7 días` });
     }
   });
 });
 
-// Endpoint para ver distribución de noticias por fecha
 app.get('/api/admin/fechas', (req, res) => {
-  const sql = `
-    SELECT 
-      DATE(timestamp) as fecha,
-      COUNT(*) as cantidad
-    FROM noticias 
-    GROUP BY DATE(timestamp)
-    ORDER BY fecha DESC
-    LIMIT 30
-  `;
-  
+  const sql = `SELECT DATE(timestamp) as fecha, COUNT(*) as cantidad FROM noticias GROUP BY DATE(timestamp) ORDER BY fecha DESC LIMIT 30`;
   db.all(sql, (err, rows) => {
     if (err) {
       res.status(500).json({ error: err.message });
     } else {
-      res.json({ 
-        distribucion: rows,
-        total: rows.reduce((sum, row) => sum + row.cantidad, 0)
-      });
+      res.json({ distribucion: rows, total: rows.reduce((sum, row) => sum + row.cantidad, 0) });
     }
   });
 });

@@ -16,6 +16,7 @@ const parser = new Parser({
   }
 });
 const PORT = process.env.PORT || 3000;
+const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY || null;
 
 app.use(cors());
 app.use(express.json());

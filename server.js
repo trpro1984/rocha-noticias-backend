@@ -184,7 +184,75 @@ const FUENTES = [
     tipo: 'scraping',
     selector: '.news-title a, article h2 a, .noticia a',
     prioridad: 'media'
+  },{
+    nombre: 'X - Rocha Uruguay',
+    url: 'https://nitter.net/search/rss?f=tweets&q=Rocha+Uruguay+-filter:retweets+-filter:replies',
+    tipo: 'rss',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'X - Hashtag #Rocha',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%23Rocha+%23Uruguay+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'alta'
+  },
+  {
+    nombre: 'X - La Paloma',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%22La+Paloma%22+Rocha+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'X - Punta del Diablo',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%22Punta+del+Diablo%22+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'media'
+  },
+  {
+    nombre: 'X - Cabo Polonio',
+    url: 'https://nitter.net/search/rss?f=tweets&q=%22Cabo+Polonio%22+-filter:retweets',
+    tipo: 'rss',
+    prioridad: 'media'
   }
+
+// NOTA: Si conoces cuentas oficiales específicas de Twitter, puedes agregarlas así:
+// {
+//   nombre: 'X - @GobiernoRocha',
+//   url: 'https://nitter.net/GobiernoRocha/rss',
+//   tipo: 'rss',
+//   prioridad: 'alta'
+// }
+
+// ========== IMPORTANTE: AGREGAR LIMPIEZA DE TEXTO DE TWEETS ==========
+// Los tweets tienen URLs, menciones y hashtags que queremos limpiar
+// Busca la función "parsearRSS" y ANTES de ella, agrega esta función:
+
+function limpiarTextoTweet(texto) {
+  if (!texto) return texto;
+  
+  // Eliminar URLs (http, https)
+  texto = texto.replace(/https?:\/\/[^\s]+/g, '');
+  
+  // Eliminar menciones @usuario (pero dejar el primer @)
+  const menciones = texto.match(/@\w+/g);
+  if (menciones && menciones.length > 1) {
+    // Mantener solo la primera mención
+    for (let i = 1; i < menciones.length; i++) {
+      texto = texto.replace(menciones[i], '');
+    }
+  }
+  
+  // Eliminar exceso de hashtags al final (más de 3 seguidos)
+  texto = texto.replace(/(\s#\w+){4,}$/g, '');
+  
+  // Eliminar espacios múltiples
+  texto = texto.replace(/\s+/g, ' ').trim();
+  
+  // Eliminar caracteres especiales de Twitter como RT, via, etc
+  texto = texto.replace(/^RT\s+/i, '');
+  
+  return texto;
+}
 ];
 
 const USER_AGENTS = [
@@ -294,7 +362,32 @@ async function scrapearSitio(fuente) {
     return [];
   }
 }
-
+function limpiarTextoTweet(texto) {
+  if (!texto) return texto;
+  
+  // Eliminar URLs (http, https)
+  texto = texto.replace(/https?:\/\/[^\s]+/g, '');
+  
+  // Eliminar menciones @usuario (pero dejar el primer @)
+  const menciones = texto.match(/@\w+/g);
+  if (menciones && menciones.length > 1) {
+    // Mantener solo la primera mención
+    for (let i = 1; i < menciones.length; i++) {
+      texto = texto.replace(menciones[i], '');
+    }
+  }
+  
+  // Eliminar exceso de hashtags al final (más de 3 seguidos)
+  texto = texto.replace(/(\s#\w+){4,}$/g, '');
+  
+  // Eliminar espacios múltiples
+  texto = texto.replace(/\s+/g, ' ').trim();
+  
+  // Eliminar caracteres especiales de Twitter como RT, via, etc
+  texto = texto.replace(/^RT\s+/i, '');
+  
+  return texto;
+}
 async function parsearRSS(fuente) {
   try {
     console.log(`📡 RSS: ${fuente.nombre}`);
@@ -322,9 +415,9 @@ async function parsearRSS(fuente) {
       
       if (contieneKeywords(textoCompleto)) {
         noticias.push({
-          titulo: titulo.substring(0, 200),
+           titulo: limpiarTextoTweet(titulo).substring(0, 200),
           url,
-          resumen: resumen.substring(0, 400),
+          resumen: limpiarTextoTweet(resumen).substring(0, 400),
           fuente: fuente.nombre,
           fechaPublicacion: fecha
         });
